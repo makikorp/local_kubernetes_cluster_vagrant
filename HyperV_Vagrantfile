@@ -1,0 +1,386 @@
+# -*- mode: ruby -*-
+# vi:set ft=ruby sw=2 ts=2 sts=2:
+
+# Define the number of master and worker nodes
+# If this number is changed, remember to update setup-hosts.sh script with the new hosts IP details in /etc/hosts of each VM.
+NUM_MASTER_NODE = 1
+NUM_WORKER_NODE = 2
+NUM_NFS_NODE = 1
+
+IP_NW = "10.128.5."
+MASTER_IP_START = 1
+NODE_IP_START = 2
+NFS_IP_START = 10
+LB_IP_START = 30
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure("2") do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://vagrantcloud.com/search.
+  # config.vm.box = "base"
+  config.vm.box = "hashicorp/bionic64"
+  # config.vm.box = "bento/ubuntu-18.04"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  # Disable automatic box update checking. If you disable this, then
+  # boxes will only be checked for updates when the user runs
+  # `vagrant box outdated`. This is not recommended.
+  config.vm.box_check_update = false
+  config.vm.boot_timeout = 600
+
+  # Create a public network, which generally matched to bridged network.
+  # Bridged networks make the machine appear as another physical device on
+  # your network.
+  # config.vm.network "public_network"
+
+  # Share an additional folder to the guest VM. The first argument is
+  # the path on the host to the actual folder. The second argument is
+  # the path on the guest to mount the folder. And the optional third
+  # argument is a set of non-required options.
+  # config.vm.synced_folder "../data", "/vagrant_data"
+
+  # Provider-specific configuration so you can fine-tune various
+  # backing providers for Vagrant. These expose provider-specific options.
+  # Example for VirtualBox:
+  #
+  # config.vm.provider "virtualbox" do |vb|
+  #   # Customize the amount of memory on the VM:
+  #   vb.memory = "1024"
+  # end
+  #
+  # View the documentation for the provider you are using for more
+  # information on available options.
+
+  # Provision Master Nodes
+  (1..NUM_MASTER_NODE).each do |i|
+      config.vm.define "kubemaster" do |node|
+        # Name shown in the GUI
+        node.vm.provider "hyperv" do |vb|
+            # vb.name = "kubemaster"
+            vb.vmname = "kubemaster"
+            vb.memory = 2048
+            vb.cpus = 1
+        end
+        node.vm.hostname = "kubemaster"
+        #node.vm.network "private_network", ip: "192.168.56.2", auto_config: false
+        #node.vm.network "private_network", bridge: "kubeCluster", ip: "192.168.56.2"
+        node.vm.network :private_network, ip: IP_NW + "#{NODE_IP_START + i}"
+        #node.vm.network "forwarded_port", guest: 22, host: 2711
+        node.vm.network "forwarded_port", guest: 22, host: "#{2710 + i}"
+
+        node.vm.provision "setup-hosts", :type => "shell", :path => "ubuntu/vagrant/setup-hosts.sh" do |s|
+          s.args = ["eth0"]
+        end
+
+        node.vm.provision "setup-dns", type: "shell", :path => "ubuntu/update-dns.sh"
+        node.vm.provision "install-docker", type: "shell", :path => "ubuntu/install-docker-2.sh"
+        node.vm.provision "shell", inline: $COMMON_SCRIPT
+        node.vm.provision "shell", inline: $MASTER_SCRIPT
+      end
+   end
+
+
+  # Provision Worker Nodes
+  (1..NUM_WORKER_NODE).each do |i|
+    config.vm.define "kubenode0#{i}" do |node|
+        node.vm.provider "hyperv" do |vb|
+            #vb.name = "kubenode0#{i}"
+            vb.vmname = "kubenode0#{i}"
+            vb.memory = 2048
+            vb.cpus = 1
+        end
+        node.vm.hostname = "kubenode0#{i}"
+        #node.vm.network "private_network", ip: "192.168.56.3", auto_config: false
+        #node.vm.network "private_network", bridge: "kubeCluster", ip: "192.168.56.3"
+        node.vm.network :private_network, ip: IP_NW + "#{NODE_IP_START + i}"
+                node.vm.network "forwarded_port", guest: 22, host: "#{2720 + i}"
+
+        node.vm.provision "setup-hosts", :type => "shell", :path => "ubuntu/vagrant/setup-hosts.sh" do |s|
+          s.args = ["eth0"]
+        end
+        node.vm.provision "setup-dns", type: "shell", :path => "ubuntu/update-dns.sh"
+        node.vm.provision "install-docker", type: "shell", :path => "ubuntu/install-docker-2.sh"
+        node.vm.provision "shell", inline: $COMMON_SCRIPT
+        node.vm.provision "shell", inline: $WORKER_SCRIPT
+    end
+  end
+
+  (1..NUM_NFS_NODE).each do |i|
+    config.vm.define "nfs0#{i}" do |node|
+        node.vm.provider "hyperv" do |vb|
+            vb.vmname = "nfs0#{i}"
+            vb.memory = 1024
+            vb.cpus = 1
+        end
+        node.vm.hostname = "nfs0#{i}"
+        #node.vm.network "private_network", ip: "192.168.56.11", auto_config: false
+        #node.vm.network "internal_network", bridge: "kubeCluster", ip: "192.168.56.11"
+        #node.vm.network "kubeCluster", ip: IP_NW + "#{NODE_IP_START + i}"
+        node.vm.network :private_network, ip: IP_NW + "#{NFS_IP_START + i}"
+                node.vm.network "forwarded_port", guest: 22, host: "#{2730 + i}"
+
+        node.vm.provision "setup-hosts", :type => "shell", :path => "ubuntu/vagrant/setup-hosts.sh" do |s|
+          s.args = ["eth0"]
+        end
+
+        node.vm.provision "setup-dns", type: "shell", :path => "ubuntu/update-dns.sh"
+        node.vm.provision "shell", inline: $NFS_SCRIPT
+        node.vm.provision "shell", inline: $VMIPADDRESS_SCRIPT
+    end
+  end
+
+end
+
+$COMMON_SCRIPT = <<-'COMMON_SCRIPT'
+# to superuser 
+
+printf '%s\n' password password '' '' '' '' '' yes | adduser eric
+
+usermod -aG sudo eric
+
+#sudo su
+
+# kubernetes requires swap off
+swapoff -a
+sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+modprobe overlay
+modprobe br_netfilter
+
+# Set up required sysctl params, these persist across reboots.
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward                = 1
+EOF
+
+cat << EOF | tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.ipv4.ip_forward                 = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+
+sysctl --system
+
+sudo apt-get update && apt-get upgrade -y
+
+# add kubernetes package repository
+apt-get install -y apt-transport-https ca-certificates curl
+
+sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+
+sudo apt-get update && apt-get upgrade -y
+
+# install CRI
+sudo rm /etc/containerd/config.toml
+
+cat << EOF | tee /etc/containerd/config.toml
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+  SystemdCgroup = true
+EOF
+
+sudo usermod -aG docker root
+sudo usermod -aG docker vagrant
+newgrp docker
+
+systemctl restart containerd
+systemctl status containerd 
+
+# install kubelet kubeadm kubectl
+sudo apt-get install -y kubelet kubeadm kubectl
+apt-mark hold kubelet kubeadm kubectl
+
+#install nfs for client - will need to mount after nfs server ip is known
+sudo apt install nfs-common -y
+
+COMMON_SCRIPT
+
+$MASTER_SCRIPT = <<-'MASTER_SCRIPT'
+
+yes | kubeadm reset
+#printf '%s\n' y
+echo '{"exec-opts": ["native.cgroupdriver=systemd"]}' | tee /etc/docker/daemon.json
+systemctl restart docker
+systemctl status docker
+
+kubeadm config images pull
+
+#IPV4=$(///sbin/ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1)
+
+kubeadm init --pod-network-cidr 10.244.0.0/16 --apiserver-advertise-address=$(///sbin/ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1) > kubeJoin.txt
+
+#output kubeadm join command to file
+kubeadm token create --print-join-command >> ///home/vagrant/kubeadm_join_command.sh
+chmod -R 777 /home/vagrant/
+#chmod +x /home/vagrant/kubeadm_join_cmd.sh
+
+#To use kubectl on kubemaster. Sometimes fails during vagrantup, may need to re-run
+sudo mkdir -p $HOME/.kube 
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+sudo mkdir /opt/bin/flanneld
+
+kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+
+
+#weave install
+#kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')env.IPALLOC_RANGE=10.244.0.0/16"
+
+#kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+
+#get ip address for nfs server
+(ip addr show eth0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1) > ///home/eric/ericIpTest00.txt
+
+#To use kubectl on kubemaster. Sometimes fails during vagrantup, may need to re-run
+
+#allow /etc/kubernetes/admin.conf to be scp to local cmd to use kubectl
+sudo chmod -R 777 /etc/kubernetes/admin.conf
+
+MASTER_SCRIPT
+
+$WORKER_SCRIPT = <<-'WORKER_SCRIPT'
+
+#printf '%s\n' password | scp -o StrictHostKeyChecking=no eric@kubemaster:/home/vagrant/kubeadm_join_command.sh /home/vagrant/kubeadm_join_cmd.sh
+
+#chmod -R 777 /home/eric/
+
+#weave
+sudo sysctl net.ipv4.conf.all.forwarding=1
+echo "net.ipv4.conf.all.forwarding=1" | sudo tee -a /etc/sysctl.conf
+
+#get kubeadm join command
+apt-get install -y sshpass
+sshpass -p 'password' scp -o StrictHostKeyChecking=no eric@kubemaster:/home/vagrant/kubeadm_join_command.sh /home/eric/kubeadm_join_cmd.sh
+
+chmod -R 777 /home/eric/
+
+sh /home/eric/kubeadm_join_cmd.sh
+
+#get ip address for nfs server
+(ip addr show eth0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1) > ///home/eric/ericIpTest00.txt
+
+
+WORKER_SCRIPT
+
+$NFS_SCRIPT = <<-'NFS_SCRIPT'
+  
+apt update
+
+apt upgrade -y
+
+#add user eric
+printf '%s\n' password password '' '' '' '' '' yes | adduser eric
+
+usermod -aG sudo eric
+
+#add sshpass to scp ip addresses using VMIPADDRESS_SCRIPT
+apt-get install -y sshpass
+#sshpass -p 'password' scp -o StrictHostKeyChecking=no eric@kubenode02:/home/eric/ericIpTest00.txt /home/eric/ericIpTest00.txt
+
+#install nfs
+apt install nfs-kernel-server -y
+
+mkdir -p /mnt/nfs_share
+chown -R nobody:nogroup /mnt/nfs_share/
+chmod -R 777 /mnt/nfs_share/
+
+#make dir for infra pv
+
+#consul
+mkdir /mnt/nfs_share/consul
+
+mkdir /mnt/nfs_share/consul/server0
+
+mkdir /mnt/nfs_share/consul/server1
+
+mkdir /mnt/nfs_share/consul/server2
+
+chmod 777 -R /mnt/nfs_share/consul
+
+#kafka
+mkdir /mnt/nfs_share/kafka
+
+mkdir /mnt/nfs_share/kafka/zookeeper0
+
+mkdir /mnt/nfs_share/kafka/kafka0
+
+chmod 777 -R /mnt/nfs_share/kafka
+
+#redis
+#mkdir /mnt/nfs_share/redis
+#mkdir /mnt/nfs_share/redis/master-0
+#mkdir /mnt/nfs_share/redis/replica-0
+
+mkdir /mnt/nfs_share/redis
+
+mkdir /mnt/nfs_share/redis/redis-cluster-0
+
+mkdir /mnt/nfs_share/redis/redis-cluster-1
+
+mkdir /mnt/nfs_share/redis/redis-cluster-2
+
+mkdir /mnt/nfs_share/redis/redis-cluster-3
+
+mkdir /mnt/nfs_share/redis/redis-cluster-4
+
+mkdir /mnt/nfs_share/redis/redis-cluster-5
+
+chmod 777 -R /mnt/nfs_share/redis
+
+#postgres
+mkdir /mnt/nfs_share/postgres
+
+mkdir /mnt/nfs_share/postgres/data-postgres-postgresql-0
+
+chmod 777 -R /mnt/nfs_share/postgres
+
+NFS_SCRIPT
+
+$VMIPADDRESS_SCRIPT = <<-'VMIPADDRESS_SCRIPT'
+
+sshpass -p 'password' scp -o StrictHostKeyChecking=no eric@kubemaster:/home/eric/ericIpTest00.txt /home/eric/ericIpTest00.txt
+sshpass -p 'password' scp -o StrictHostKeyChecking=no eric@kubenode01:/home/eric/ericIpTest00.txt /home/eric/ericIpTest01.txt
+sshpass -p 'password' scp -o StrictHostKeyChecking=no eric@kubenode02:/home/eric/ericIpTest00.txt /home/eric/ericIpTest02.txt
+
+
+cat /home/eric/ericIpTest00.txt /home/eric/ericIpTest01.txt /home/eric/ericIpTest02.txt > ///home/eric/kubeClusterIP.txt 
+
+cat >///home/eric/testIPscript.sh <<EOF
+#! /bin/bash
+
+#input="/home/eric/kubeClusterIP.txt"
+while IFS= read -r line;
+do
+  echo '/mnt/nfs_share' \$line'(rw,sync,no_subtree_check,no_root_squash)' >> /etc/exports
+done < "/home/eric/kubeClusterIP.txt"
+EOF
+
+sh /home/eric/testIPscript.sh
+
+exportfs -a
+systemctl restart nfs-kernel-server
+
+#Once completed a mount on each kubemaster, kubenode01, kubenode02 will need to be created
+#sudo mount -t nfs <nfs server ip>:/mnt/nfs_share /home/eric/ as example
+#Verify the mount with df -h command should see the mount
+#172.21.86.173:/mnt/nfs_share      62G  2.0G   57G   4% /home/eric
+
+
+VMIPADDRESS_SCRIPT
+
